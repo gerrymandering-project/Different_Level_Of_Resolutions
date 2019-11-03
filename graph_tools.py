@@ -13,8 +13,6 @@ import requests
 import geopandas
 import maup
 
-
-
 import os
 import random
 import json
@@ -27,7 +25,6 @@ import matplotlib.pyplot as plt
 #link = input("Put graph link: ")
 
 def graph_from_url(link):
-    link = "link"
     r = requests.get(url=link)
     data = json.loads(r.content)
     g = json_graph.adjacency_graph(data)
