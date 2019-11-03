@@ -1,4 +1,4 @@
-git from gerrychain import (GeographicPartition, Partition, Graph, MarkovChain,
+from gerrychain import (GeographicPartition, Partition, Graph, MarkovChain,
                         proposals, updaters, constraints, accept, Election)
 
 from functools import partial
