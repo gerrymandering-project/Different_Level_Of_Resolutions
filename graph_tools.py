@@ -1,4 +1,4 @@
-from gerrychain import (GeographicPartition, Partition, Graph, MarkovChain,
+git from gerrychain import (GeographicPartition, Partition, Graph, MarkovChain,
                         proposals, updaters, constraints, accept, Election)
 
 from functools import partial
@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 #link = input("Put graph link: ")
 
 def graph_from_url(link):
-    link = "https://people.csail.mit.edu/ddeford/BLOCK/BLOCK_55.json"
+    link = "link"
     r = requests.get(url=link)
     data = json.loads(r.content)
     g = json_graph.adjacency_graph(data)
