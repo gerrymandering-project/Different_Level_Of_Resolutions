@@ -1,69 +1,36 @@
-
-from gerrychain import (GeographicPartition, Partition, Graph, MarkovChain,
-                        proposals, updaters, constraints, accept, Election)
-
-from functools import partial
-import pandas
-import json
-
-import random
-from networkx.readwrite import json_graph
-import json
-import numpy as np
 import requests
-import geopandas
-import maup
-
-
-
-import os
 import random
 import json
-import geopandas as gpd
-import functools
-import datetime
-import matplotlib
-# matplotlib.use('Agg')
-
-
 import matplotlib.pyplot as plt
-
-import csv
 from networkx.readwrite import json_graph
-
 from functools import partial
 import networkx as nx
 import numpy as np
-
 from gerrychain import Graph
 from gerrychain import MarkovChain
 from gerrychain.constraints import (Validator, single_flip_contiguous,
-                                    within_percent_of_ideal_population, UpperBound)
-from gerrychain.proposals import propose_random_flip, propose_chunk_flip
-from gerrychain.accept import always_accept
-from gerrychain.updaters import Election, Tally, cut_edges
-from gerrychain import GeographicPartition
+                                    within_percent_of_ideal_population)
+from gerrychain.updaters import Tally, cut_edges
 from gerrychain.partition import Partition
 from gerrychain.proposals import recom
-from gerrychain.metrics import mean_median, efficiency_gap
-from gerrychain.tree import recursive_tree_part, bipartition_tree_random, PopulatedGraph, contract_leaves_until_balanced_or_none, find_balanced_edge_cuts
+from gerrychain.tree import PopulatedGraph, find_balanced_edge_cuts
 
 
 def get_spanning_tree_u_w(G):
-    node_set=set(G.nodes())
-    x0=random.choice(tuple(node_set))
-    x1=x0
-    while x1==x0:
-        x1=random.choice(tuple(node_set))
+    node_set = set(G.nodes())
+    x0 = random.choice(tuple(node_set))
+    x1 = x0
+    while x1 == x0:
+        x1 = random.choice(tuple(node_set))
     node_set.remove(x1)
-    tnodes ={x1}
-    tedges=[]
-    current=x0
-    current_path=[x0]
-    current_edges=[]
+    tnodes = {x1}
+    tedges = []
+    current = x0
+    current_path = [x0]
+    current_edges = []
     while node_set != set():
-        next=random.choice(list(G.neighbors(current)))
-        current_edges.append((current,next))
+        next = random.choice(list(G.neighbors(current)))
+        current_edges.append((current, next))
         current = next
         current_path.append(next)
 
@@ -75,27 +42,27 @@ def get_spanning_tree_u_w(G):
                 tedges.append(ed)
             current_edges = []
             if node_set != set():
-                current=random.choice(tuple(node_set))
-            current_path=[current]
-
+                current = random.choice(tuple(node_set))
+            current_path = [current]
 
         if next in current_path[:-1]:
             current_path.pop()
             current_edges.pop()
             for i in range(len(current_path)):
-                if current_edges !=[]:
+                if current_edges != []:
                     current_edges.pop()
                 if current_path.pop() == next:
                     break
-            if len(current_path)>0:
-                current=current_path[-1]
+            if len(current_path) > 0:
+                current = current_path[-1]
             else:
-                current=random.choice(tuple(node_set))
-                current_path=[current]
+                current = random.choice(tuple(node_set))
+                current_path = [current]
 
-    #tgraph = Graph()
-    #tgraph.add_edges_from(tedges)
+    # tgraph = Graph()
+    # tgraph.add_edges_from(tedges)
     return G.edge_subgraph(tedges)
+
 
 def my_uu_bipartition_tree_random(
     graph,
@@ -103,31 +70,20 @@ def my_uu_bipartition_tree_random(
     pop_target,
     epsilon,
     node_repeats=1,
-    # spanning_tree=None,
-    choice=random.choice):
+    spanning_tree=None,
+    choice = random.choice):
     populations = {node: graph.nodes[node][pop_col] for node in graph}
 
-
-    #     populations = {node: graph.nodes[node]["population"] for node in graph}
-    # choice = random.choice
     # pop_target = ideal_population
-    # epsilon = .2
-    k = 10
+    k = 2
     pop_target = np.sum([graph.nodes[node]["population"] for node in graph])/ k
     possible_cuts = []
-    #
-    # if spanning_tree is None:
-    #     spanning_tree = get_spanning_tree_u_w(graph)
 
     while len(possible_cuts) == 0:
         spanning_tree = get_spanning_tree_u_w(graph)
         h = PopulatedGraph(spanning_tree, populations, pop_target, epsilon)
         possible_cuts = find_balanced_edge_cuts(h, choice=choice)
 
-    # TODO: pulling off the third of the graph
-    #This seems to be pulling off a third of the graph ...
-    #So the way to continue -- is pull off that third into one block
-    #Then repeat this,
     return choice(possible_cuts).subset
 
 
@@ -139,6 +95,78 @@ def get_spanning_tree_mst(graph):
         graph, algorithm="kruskal", weight="weight"
     )
     return spanning_tree
+
+
+def recursive_my_mst_k_partition_tree_random(
+        test_graph,
+        pop_col,
+        pop_target,
+        epsilon,
+        num_blocks,
+        our_blocks,
+        spanning_tree=None,
+        choice=random.choice,):
+    populations = {node: test_graph.nodes[node][pop_col] for node in test_graph}
+    pop_target = np.sum([test_graph.nodes[node]["population"] for node in test_graph]) / num_blocks
+
+    possible_cuts = []
+
+    while len(possible_cuts) == 0:
+        spanning_tree = get_spanning_tree_mst(test_graph)
+        h = PopulatedGraph(spanning_tree, populations, pop_target, epsilon)
+        possible_cuts = find_balanced_edge_cuts(h, choice=choice)
+
+    spanning_tree.remove_edge(possible_cuts[0].edge[0], possible_cuts[0].edge[1])
+    unfrozen_tree = nx.Graph(spanning_tree)
+    comps = nx.connected_components(unfrozen_tree)
+
+    list_comps = list(comps)
+    population_block = 0
+    list_blocks = []
+
+    for x in list_comps:
+        for y in x:
+            population_block += populations[y]
+        list_blocks.append(population_block)
+        population_block = 0
+
+    index = min(range(len(list_blocks)), key=lambda x: abs(list_blocks[x]-pop_target))
+    our_blocks.append(list_comps[index])
+    sub_graph = test_graph.copy()
+    for x in list_comps[index]:
+        sub_graph.remove_node(x)
+    return sub_graph
+
+
+#The purpose of this is to create a starting partition -- this will return a list of blocks, and
+#you'll need to turn that into a Gerrychain assignment object, as a place to start hte recomb chain.
+def my_mst_kpartition_tree_random(
+        graph,
+        pop_col,
+        pop_target,
+        epsilon,
+        num_blocks,
+        node_repeats=1,
+        spanning_tree=None,
+        choice=random.choice,):
+
+    our_blocks = []
+    repeat_time = num_blocks - 1
+    sub_graph = graph.copy()
+    for x in range(repeat_time):
+        sub_graph = recursive_my_mst_k_partition_tree_random(sub_graph, pop_col, pop_target, epsilon, num_blocks,
+                                                             our_blocks, spanning_tree=None, choice=random.choice,)
+    last_spanning_tree = get_spanning_tree_mst(sub_graph)
+    comps = nx.connected_components(last_spanning_tree)
+    list_comps = list(comps)
+    our_blocks.append(list_comps[0])
+
+    # Which of the two componets is the block of the target size? Say it is component A. The other is B.
+    # Add A to a list our_blocks, then B,
+
+    # return #The list of blocks
+    return our_blocks
+
 
 def my_mst_bipartition_tree_random(
     graph,
@@ -162,11 +190,6 @@ def my_mst_bipartition_tree_random(
     return choice(possible_cuts).subset
 
 
-def fixed_endpoints(partition):
-    return partition.assignment[(19, 0)] != partition.assignment[(20, 0)] and partition.assignment[(19, 39)] != \
-           partition.assignment[(20, 39)]
-
-
 def boundary_condition(partition):
     blist = partition["boundary"]
     o_part = partition.assignment[blist[0]]
@@ -176,74 +199,6 @@ def boundary_condition(partition):
             return True
 
     return False
-
-
-
-def annealing_cut_accept_backwards(partition):
-    boundaries1 = {x[0] for x in partition["cut_edges"]}.union({x[1] for x in partition["cut_edges"]})
-    boundaries2 = {x[0] for x in partition.parent["cut_edges"]}.union({x[1] for x in partition.parent["cut_edges"]})
-
-    t = partition["step_num"]
-
-    # if t <100000:
-    #    beta = 0
-    # elif t<400000:
-    #    beta = (t-100000)/100000 #was 50000)/50000
-    # else:
-    #    beta = 3
-    base = .1
-    beta = 5
-
-    bound = 1
-    if partition.parent is not None:
-        bound = (base ** (beta * (-len(partition["cut_edges"]) + len(partition.parent["cut_edges"])))) * (
-                    len(boundaries1) / len(boundaries2))
-
-        if not popbound(partition):
-            bound = 0
-        if not single_flip_contiguous(partition):
-            bound = 0
-            # bound = min(1, (how_many_seats_value(partition, col1="G17RATG",
-        # col2="G17DATG")/how_many_seats_value(partition.parent, col1="G17RATG",
-        # col2="G17DATG"))**2  ) #for some states/elections probably want to add 1 to denominator so you don't divide by zero
-
-    return random.random() < bound
-
-
-def go_nowhere(partition):
-    return partition.flip(dict())
-
-
-def slow_reversible_propose(partition):
-    """Proposes a random boundary flip from the partition in a reversible fasion
-    by selecting uniformly from the (node, flip) pairs.
-    Temporary version until we make an updater for this set.
-    :param partition: The current partition to propose a flip from.
-    :return: a proposed next `~gerrychain.Partition`
-    """
-
-    # b_nodes = {(x[0], partition.assignment[x[1]]) for x in partition["cut_edges"]
-    #           }.union({(x[1], partition.assignment[x[0]]) for x in partition["cut_edges"]})
-
-    flip = random.choice(list(partition["b_nodes"]))
-
-    return partition.flip({flip[0]: flip[1]})
-
-
-def slow_reversible_propose_bi(partition):
-    """Proposes a random boundary flip from the partition in a reversible fasion
-    by selecting uniformly from the (node, flip) pairs.
-    Temporary version until we make an updater for this set.
-    :param partition: The current partition to propose a flip from.
-    :return: a proposed next `~gerrychain.Partition`
-    """
-
-    # b_nodes = {(x[0], partition.assignment[x[1]]) for x in partition["cut_edges"]
-    #           }.union({(x[1], partition.assignment[x[0]]) for x in partition["cut_edges"]})
-
-    fnode = random.choice(list(partition["b_nodes"]))
-
-    return partition.flip({fnode: -1 * partition.assignment[fnode]})
 
 
 def geom_wait(partition):
@@ -260,14 +215,6 @@ def b_nodes_bi(partition):
     return {x[0] for x in partition["cut_edges"]}.union({x[1] for x in partition["cut_edges"]})
 
 
-def uniform_accept(partition):
-    bound = 0
-    if popbound(partition) and single_flip_contiguous(partition) and boundary_condition(partition):
-        bound = 1
-
-    return random.random() < bound
-
-
 def cut_accept(partition):
     bound = 1
     if partition.parent is not None:
@@ -275,26 +222,30 @@ def cut_accept(partition):
             partition.parent["cut_edges"])))  # *(len(boundaries1)/len(boundaries2))
 
     return random.random() < bound
-############
 
 
-# link = input()
-# r = requests.get(url='https://people.csail.mit.edu/ddeford//COUNTY/COUNTY_55.json') # Wisconsin county
-# r = requests.get(url='https://people.csail.mit.edu/ddeford//COUSUB/COUSUB_05.json') # Wisconsin
-# r = requests.get(url='https://people.csail.mit.edu/ddeford//COUSUB/COUSUB_17.json')
-# r = requests.get(url='https://people.csail.mit.edu/ddeford//COUNTY/COUNTY_06.json') # WV county
-# print(json.loads(r.content))
-link = input("Put graph link: ")
-r = requests.get(url=link)
-data = json.loads(r.content)
-g = json_graph.adjacency_graph(data)
+def graph_from_url():
+    link = input("Put graph link: ")
+    r = requests.get(link)
+    data = json.loads(r.content)
+    g = json_graph.adjacency_graph(data)
+    graph = Graph(g)
+    graph.issue_warnings()
 
-graph = Graph(g)
-graph.issue_warnings()
+    return graph
+
+
+def visualize_partition(graph, pos, partition_dict):
+
+    nx.draw(graph, pos, node_color=[partition_dict[x] for x in graph.nodes()])
+
+
+# link = input("Put graph link: ")
+graph = graph_from_url()
 
 pos = {}
 for node in graph.nodes():
-    pos[node] = [graph.node[node]['C_X'], graph.node[node]['C_Y'] ]
+    pos[node] = [graph.node[node]['C_X'], graph.node[node]['C_Y']]
 
 plt.show()
 
@@ -311,10 +262,12 @@ chaintype = "tree"
 p = .6
 proportion = p*6
 
+rural_seats = 0
+
 for p in [.6]:
     proportion = p * 6
     plt.figure()
-    nx.draw(graph, pos, node_size = 1, width = 1, cmap=plt.get_cmap('jet'))
+    nx.draw(graph, pos, node_size=1, width=1, cmap=plt.get_cmap('jet'))
 
     y_coordinates = [graph.node[node]['C_Y'] for node in graph.nodes()]
     mean_y = np.mean(y_coordinates)
@@ -382,8 +335,22 @@ for p in [.6]:
                 }
 
     #########BUILD PARTITION
+    # building partition dicitionary (assignment)
+    # [ 1,2,3], [4,5,6] ... the dictionary will : {1 : 0, 2 : 0, ..., 5 : 1, 6 : 1 }$...
+    partition_dict = {}
+    partition_block = []
+    partition_block = my_mst_kpartition_tree_random(graph, pop_col="population", pop_target=0, epsilon=0.05,
+                                                    num_blocks=4, node_repeats=1, spanning_tree=None,
+                                                    choice=random.choice)
+    for n in graph.nodes:
+        for x in range(len(partition_block)):
+            if n in partition_block[x]:
+                partition_dict[n] = x
 
-    grid_partition = Partition(graph, assignment=cddict, updaters=updaters)
+    ###In order to mak ea partition, you'll make a dictionary from your list of blocks
+    #pass that dictionary into below as the assignment.
+    # grid_partition = Partition(graph, assignment=cddict, updaters=updaters)
+    grid_partition = Partition(graph, assignment=partition_dict, updaters=updaters)
     pop1 = .05
 
     base = 1
@@ -408,7 +375,8 @@ for p in [.6]:
     #                         )
 
     #######BUILD MARKOV CHAINS
-
+    pop_col = "population"
+    epsilon = 0.05
     if chaintype == "tree":
         tree_proposal = partial(recom, pop_col="population", pop_target=ideal_population, epsilon=0.05,
                                 node_repeats=1, method=my_mst_bipartition_tree_random)
@@ -443,15 +411,18 @@ for p in [.6]:
     import time
 
     st = time.time()
-
+    # TODO: make a histogram for total number of rural seats in different graph
+    # TODO: make a generic type for the voting data & revise the programs (histogram)
     t = 0
-    seats = [[],[]]
-    vote_counts = [[],[]]
+    num_blocks = len(set(partition_dict.values()))
+    seats = [[] for y in range(num_blocks)]
+    vote_counts = [[], []]
     old = 0
     #skip = next(exp_chain)
     #skip the first partition
     k = 0
     num_cuts_list = []
+    rural_seats_list = []
     for part in exp_chain:
         if k > 0:
             #if part.assignment == old:
@@ -474,44 +445,57 @@ for p in [.6]:
                     abs(t - graph.node[f]["last_flipped"]))
                 graph.node[f]["last_flipped"] = t
                 graph.node[f]["num_flips"] = graph.node[f]["num_flips"] + 1
-            for i in [0, 1]:
-                top = []
-                bottom = []
-                rural_top = 0
-                urban_top = 0
-                rural_bottom = 0
-                urban_bottom = 0
-                for n in graph.nodes():
-                    if part.assignment[n] == 1:
-                        #This iterates through all of the nodes of graph that are assigned to block 1
-                        #You'll want to have them "vote" in some way.
-                        #
-                        rural_top += graph.node[n]["RVAP"]
-                        urban_top += graph.node[n]["UVAP"]
-                        #top.append( int(n[i] < proportion*m))
-                        #Voting data here.
-                    if part.assignment[n] == -1:
-                        #bottom.append( int( n[i] < proportion*m))
-                        rural_bottom += graph.node[n]["RVAP"]
-                        urban_bottom += graph.node[n]["UVAP"]
-                        #Same thing here for rural_bot and urban_bot
-                        # bottom.append(0)
+            # num_blocks  = len(set(partition_dict.values()))
 
-
-                top_seat = int(rural_top > urban_top)
-                bottom_seat = int(rural_bottom > urban_bottom)
-                #might have to worry about there being either so many urban or rural that these go always
-                #one direction
-
-                #just a hack for now ...
-
-                #could replace with top_seat = int(rural_top  / 10 > urban)
-                total_seats = top_seat + bottom_seat
+            # calculate the voting data
+            for i in range(num_blocks):
+                rural_pop = 0
+                urban_pop = 0
+                for n in graph.nodes:
+                    if part.assignment[n] == i:
+                        rural_pop += graph.node[n]["RVAP"]
+                        urban_pop += graph.node[n]["UVAP"]
+                total_seats = int(rural_pop > urban_pop)
                 seats[i].append(total_seats)
+                # for n in graph.nodes():
+                #     if part.assignment[n] == 1:
+                #         #This iterates through all of the nodes of graph that are assigned to block 1
+                #         #You'll want to have them "vote" in some way.
+                #         #
+                #         rural_top += graph.node[n]["RVAP"]
+                #         urban_top += graph.node[n]["UVAP"]
+                #         #top.append( int(n[i] < proportion*m))
+                #         #Voting data here.
+                #     if part.assignment[n] == -1:
+                #         #bottom.append( int( n[i] < proportion*m))
+                #         rural_bottom += graph.node[n]["RVAP"]
+                #         urban_bottom += graph.node[n]["UVAP"]
+                #         #Same thing here for rural_bot and urban_bot
+                #         # bottom.append(0)
+                #
+                #
+                # top_seat = int(rural_top > urban_top)
+                # bottom_seat = int(rural_bottom > urban_bottom)
+                # #might have to worry about there being either so many urban or rural that these go always
+                # #one direction
+                #
+                # #just a hack for now ...
+                #
+                # #could replace with top_seat = int(rural_top  / 10 > urban)
+                # total_seats = top_seat + bottom_seat
+                # seats[i].append(total_seats)
             #old = part.assignment
         t += 1
         k += 1
+    for x in range(len(seats[0])):
+        for n in range(len(seats)):
+            rural_seats += seats[n][x]
+        rural_seats_list.append(rural_seats)
+        rural_seats = 0
 
+    # make a histogram to record rural_seats
+    plt.hist(rural_seats_list)
+    plt.show()
     width = 0
     diagonal_bias = 0
     print("average cut size:", np.mean(num_cuts_list))
@@ -530,9 +514,9 @@ for p in [.6]:
     print(seats)
 
     plt.figure()
-    nx.draw(graph, pos, node_color=[0 for x in graph.nodes()], node_size=1,
+    nx.draw(graph, pos, node_color=[0 for x in graph.nodes()], node_size=.5,
             edge_color=[graph[edge[0]][edge[1]]["cut_times"] for edge in graph.edges()], node_shape='s',
-            cmap='magma', width=3)
+            cmap='magma', width=2)
     # plt.savefig("./plots/Attractor/" + str(alignment) + "SAMPLES:" + str(steps) + "Size:" + str(m) + "WIDTH:" + str(width) + "chaintype:" +str(chaintype) +  "Bias:" + str(diagonal_bias) +  "P" + str(
     #      int(100 * pop1)) + "edges.eps", format='eps')
     plt.show()
