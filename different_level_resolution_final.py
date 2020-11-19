@@ -129,7 +129,7 @@ def recursive_my_mst_k_partition_tree_random(
         choice=random.choice,):
 
     populations = {node: test_graph.nodes[node][pop_col] for node in test_graph}
-    pop_target = np.sum([test_graph.nodes[node]["population"] for node in test_graph]) / num_blocks
+    # pop_target = np.sum([test_graph.nodes[node]["population"] for node in test_graph]) / num_blocks
     possible_cuts = []
 
     while len(possible_cuts) == 0:
@@ -178,6 +178,8 @@ def my_mst_kpartition_tree_random(
     repeat_time = num_blocks - 1
     sub_graph = graph.copy()
 
+    pop_target = np.sum([graph.nodes[node]["population"] for node in graph]) / num_blocks
+
     # repeated call for cut spanning tree into blocks with ideal population we want
     for x in range(repeat_time):
         sub_graph = recursive_my_mst_k_partition_tree_random(sub_graph, pop_col, pop_target, epsilon, num_blocks,
@@ -201,18 +203,18 @@ def boundary_condition(partition):
     return False
 
 
-def geom_wait(partition):
-    return int(np.random.geometric(
-        len(list(partition["b_nodes"])) / (len(partition.graph.nodes) ** (len(partition.parts)) - 1), 1)) - 1
-
-
-def b_nodes(partition):
-    return {(x[0], partition.assignment[x[1]]) for x in partition["cut_edges"]
-            }.union({(x[1], partition.assignment[x[0]]) for x in partition["cut_edges"]})
-
-
-def b_nodes_bi(partition):
-    return {x[0] for x in partition["cut_edges"]}.union({x[1] for x in partition["cut_edges"]})
+# def geom_wait(partition):
+#     return int(np.random.geometric(
+#         len(list(partition["b_nodes"])) / (len(partition.graph.nodes) ** (len(partition.parts)) - 1), 1)) - 1
+#
+#
+# def b_nodes(partition):
+#     return {(x[0], partition.assignment[x[1]]) for x in partition["cut_edges"]
+#             }.union({(x[1], partition.assignment[x[0]]) for x in partition["cut_edges"]})
+#
+#
+# def b_nodes_bi(partition):
+#     return {x[0] for x in partition["cut_edges"]}.union({x[1] for x in partition["cut_edges"]})
 
 
 def cut_accept(partition):
@@ -225,7 +227,8 @@ def cut_accept(partition):
 
 # get the graph from online json file
 def graph_from_url():
-    link = input("Put graph link: ")
+    # link = input("Put graph link: ")
+    link = "https://people.csail.mit.edu/ddeford//COUNTY/COUNTY_37.json"
     r = requests.get(link)
     data = json.loads(r.content)
     g = json_graph.adjacency_graph(data)
@@ -239,23 +242,17 @@ def visualize_partition(graph, pos, partition_dict):
     nx.draw(graph, pos, node_color=[partition_dict[x] for x in graph.nodes()])
 
 
-graph = {}
-pos = {}
-chaintype = "tree"
-updaters = {}
-ideal_population = 0
-
-
 def set_up_graph():
-    global graph
     graph = graph_from_url()
-    global pos
     for node in graph.nodes():
-        pos[node] = [graph.node[node]['C_X'], graph.node[node]['C_Y']]
+        graph.nodes[node]['pos'] = (graph.node[node]['C_X'], graph.node[node]['C_Y'])
+        # pos[node] = [graph.node[node]['C_X'], graph.node[node]['C_Y']]
 
     # original graph with no partition divide
-    plt.figure()
-    nx.draw(graph, pos, node_size=1, width=1, cmap=plt.get_cmap('jet'))
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_aspect('equal')
+    nx.draw(graph, pos=nx.get_node_attributes(graph, 'pos'), node_size=1, width=1, cmap=plt.get_cmap('jet'))
     plt.show()
 
     y_coordinates = [graph.node[node]['C_Y'] for node in graph.nodes()]
@@ -269,7 +266,7 @@ def set_up_graph():
     for x in graph.nodes():
         if graph.node[x]['C_Y'] >= mean_y:
             vertical.append(x)
-    set_up_markov_chain(graph, horizontal)
+    return graph, horizontal
 
 
 def set_up_markov_chain(graph, horizontal):
@@ -277,8 +274,6 @@ def set_up_markov_chain(graph, horizontal):
     ns = 1
     m = 10
     widths = [0]
-    global chaintype
-# chaintype = "uniform_tree"
     chaintype = "tree"
     p = .6
     proportion = p*6
@@ -300,23 +295,7 @@ def set_up_markov_chain(graph, horizontal):
         graph.node[node]["part_sum"] = cddict[node]
         graph.node[node]["last_flipped"] = 0
         graph.node[node]["num_flips"] = 0
-
-    global updaters
-    updaters = {'population': Tally('population'),
-            "boundary": bnodes_p,
-            'cut_edges': cut_edges,
-            'step_num': step_num,
-            'b_nodes': b_nodes_bi,
-            'base': new_base,
-            'geom': geom_wait,
-            # "Pink-Purple": Election("Pink-Purple", {"Pink":"pink","Purple":"purple"})
-            }
-    build_partition()
-    global ideal_population
-    ideal_population = sum(grid_partition["population"].values()) / len(grid_partition)
-    build_markov_chain(steps)
-
-
+    return steps, chaintype
 
 ####CONFIGURE UPDATERS
 
@@ -335,60 +314,41 @@ def step_num(partition):
 
 # bnodes = [x for x in graph.nodes() if graph.node[x]["boundary_node"] == 1]
 
-
-def bnodes_p(partition):
-    return [x for x in graph.nodes() if graph.node[x]["boundary_node"] == 1]
+#
+# def bnodes_p(partition):
+#     return [x for x in graph.nodes() if graph.node[x]["boundary_node"] == 1]
 
 
 #########BUILD PARTITION
 # building partition dicitionary (assignment)
 # [ 1,2,3], [4,5,6] ... the dictionary will : {1 : 0, 2 : 0, ..., 5 : 1, 6 : 1 }$...
 # It is the partition dictionary for k-partition
-partition_dict = {}
-partition_block = []
-grid_partition = {}
 pop1 = .05
 base = 1
 
-
-def build_partition():
-    global partition_block
-    global partition_dict
+# building partition dictionary with k number of blocks
+def build_partition(graph):
 
     partition_dict = {}
-    partition_block = my_mst_kpartition_tree_random(graph, pop_col="population", pop_target=0, epsilon=0.05,
-                                                num_blocks=4, node_repeats=1, spanning_tree=None,
+    partition_block = my_mst_kpartition_tree_random(graph, pop_col="population", pop_target=0, epsilon=0.5,
+                                                num_blocks=8, node_repeats=1, spanning_tree=None,
                                                 choice=random.choice)
     for n in graph.nodes:
         for x in range(len(partition_block)):
             if n in partition_block[x]:
                 partition_dict[n] = x
 
-# grid_partition = Partition(graph, assignment=cddict, updaters=updaters)
-    global grid_partition
+    updaters = {'population': Tally('population'),
+            'cut_edges': cut_edges,
+            'step_num': step_num,
+            'base': new_base,
+            }
     grid_partition = Partition(graph, assignment=partition_dict, updaters=updaters)
+    return grid_partition, partition_dict
 
-
-# ADD CONSTRAINTS
-# popbound = within_percent_of_ideal_population(grid_partition, pop1)
-# '''
-# plt.figure()
-# nx.draw(graph, pos={x: x for x in graph.nodes()}, node_size=ns,
-#         node_shape='s', cmap='tab20')
-# plt.savefig("./plots/Attractor/" + str(alignment) + "SAMPLES:" + str(steps) + "Size:" + str(m) + "WIDTH:" + str(width) + "chaintype:" +str(chaintype) +    "B" + str(int(100 * base)) + "P" + str(
-#     int(100 * pop1)) + "start.eps", format='eps')
-# plt.close()'''
-
-#########Setup Proposal
-# # tree_proposal = partial(recom,
-#                         pop_col="population",
-#                         pop_target=ideal_population,
-#                         epsilon=1,
-#                         node_repeats=1
-#                         )
 
 #######BUILD MARKOV CHAINS
-def build_markov_chain(steps):
+def build_markov_chain(steps, chaintype, ideal_population, grid_partition):
     if chaintype == "tree":
         tree_proposal = partial(recom, pop_col="population", pop_target=ideal_population, epsilon=0.05,
                             node_repeats=1, method=my_mst_bipartition_tree_random)
@@ -410,18 +370,11 @@ def build_markov_chain(steps):
                             Validator([#popbound  # ,boundary_condition
                                        ]), accept=cut_accept, initial_state=grid_partition,
                             total_steps=steps)
-    run_markov_chain(exp_chain)
+    return exp_chain
 
 
 #########Run MARKOV CHAINS
-
-# num_blocks = 0
-seats = [[]]
-urban_seats_list = []
-rural_seats_list = []
-vote_counts = [[], []]
-
-def run_markov_chain(exp_chain):
+def run_markov_chain(exp_chain, partition_dict, graph):
     rsw = []
     rmm = []
     reg = []
@@ -431,12 +384,13 @@ def run_markov_chain(exp_chain):
     st = time.time()
 
     num_blocks = len(set(partition_dict.values()))
-    global seats
+
     seats = [[] for y in range(num_blocks)]
     t = 0
     k = 0
     old = 0
     num_cuts_list = []
+    seats_won_table = []
 
 # '''
 # seats is organized as follows:
@@ -446,11 +400,9 @@ def run_markov_chain(exp_chain):
 #
 # '''
     for part in exp_chain:
+        seats_won = 0
         if k > 0:
             print(part["population"])
-            rce.append(len(part["cut_edges"])) # get rid of this, its counted in numcuts below
-            waits.append(part["geom"]) #You can ignore this
-            rbn.append(len(list(part["b_nodes"]))) # also ignore this
 
             num_cuts = len(part["cut_edges"])
             num_cuts_list.append(num_cuts)
@@ -473,16 +425,21 @@ def run_markov_chain(exp_chain):
                         rural_pop += graph.node[n]["RVAP"]
                         urban_pop += graph.node[n]["UVAP"]
                 total_seats = int(rural_pop > urban_pop)
+                seats_won += total_seats
+                seats_won_table.append(seats_won)
                 seats[i].append(total_seats)
 
         t += 1
         k += 1
+    return seats, seats_won_table
 
 
 # for collecting voting data of rural and urban seats
-def collect_voting_data():
+def collect_voting_data(seats):
     rural_seats = 0
     urban_seats = 0
+    rural_seats_list = []
+    urban_seats_list = []
     for map_index in range(len(seats[0])):
         for n in range(len(seats)):
             rural_seats += seats[n][map_index]
@@ -494,14 +451,24 @@ def collect_voting_data():
 
 
 def main():
-    set_up_graph()
-    collect_voting_data()
-    plt.hist(rural_seats_list)
+    graph, horizontal = set_up_graph()
+    steps, chaintype = set_up_markov_chain(graph, horizontal)
+    grid_partition, partition_dict = build_partition(graph)
+    ideal_population = sum(grid_partition["population"].values()) / len(grid_partition)
+    exp_chain = build_markov_chain(steps, chaintype, ideal_population, grid_partition)
+    seats, seats_won_table = run_markov_chain(exp_chain, partition_dict, graph)
+    collect_voting_data(seats)
+    # plt.hist(rural_seats_list)
+    plt.hist(seats_won_table)
+    plt.show()
 
-    plt.figure()
-    nx.draw(graph, pos, node_color=[0 for x in graph.nodes()], node_size=.5,
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_aspect('equal')
+    nx.draw(graph, pos=nx.get_node_attributes(graph, 'pos'), node_color=[0 for x in graph.nodes()], node_size=0,
             edge_color=[graph[edge[0]][edge[1]]["cut_times"] for edge in graph.edges()], node_shape='s',
-            cmap='magma', width=2)
+            cmap='magma', width=0.5)
+    plt.savefig("./plots/" + "NC_COUNTY.svg", format='svg')
     # plt.savefig("./plots/Attractor/" + str(alignment) + "SAMPLES:" + str(steps) + "Size:" + str(m) + "WIDTH:" + str(width) + "chaintype:" +str(chaintype) +  "Bias:" + str(diagonal_bias) +  "P" + str(
     #      int(100 * pop1)) + "edges.eps", format='eps')
     plt.show()
