@@ -13,7 +13,7 @@ from gerrychain.constraints import (Validator, single_flip_contiguous,
 from gerrychain.updaters import Tally, cut_edges
 from gerrychain.partition import Partition
 from gerrychain.proposals import recom
-from gerrychain.tree import PopulatedGraph, find_balanced_edge_cuts
+from gerrychain.tree import PopulatedGraph, find_balanced_edge_cuts, recursive_tree_part
 import time
 
 
@@ -111,13 +111,16 @@ def my_mst_bipartition_tree_random(
 
     while len(possible_cuts) == 0:
         spanning_tree = get_spanning_tree_mst(graph)
-        h = PopulatedGraph(spanning_tree, populations, pop_target, epsilon)
-        possible_cuts = find_balanced_edge_cuts(h, choice=choice)
+        # h = PopulatedGraph(spanning_tree, populations, pop_target, epsilon)
+        h = PopulatedGraph(spanning_tree, populations, pop_target, 0.05)
+        # possible_cuts = find_balanced_edge_cuts(h, choice=choice)
+        possible_cuts = find_balanced_edge_cuts(h, random.choice)
 
     return choice(possible_cuts).subset
 
 
 # helper method used for find k_partition_tree and return graph that remove edges
+# TODO: it is unbalanced, consider how to build an balanced parititon
 def recursive_my_mst_k_partition_tree_random(
         test_graph,
         pop_col,
@@ -138,26 +141,31 @@ def recursive_my_mst_k_partition_tree_random(
         possible_cuts = find_balanced_edge_cuts(h, choice=choice)
 
     # remove possible cuts to get new partition
-    spanning_tree.remove_edge(possible_cuts[0].edge[0], possible_cuts[0].edge[1])
-    unfrozen_tree = nx.Graph(spanning_tree)
-    comps = nx.connected_components(unfrozen_tree)
+    # spanning_tree.remove_edge(possible_cuts[0].edge[0], possible_cuts[0].edge[1])
+    # unfrozen_tree = nx.Graph(spanning_tree)
+    # comps = nx.connected_components(unfrozen_tree)
+    #
+    # list_comps = list(comps)
+    # population_block = 0
+    # list_blocks = []
+    #
+    # # iterate through all new blocks to find out which block's population close to ideal population, add to block list
+    # for x in list_comps:
+    #     for y in x:
+    #         population_block += populations[y]
+    #     list_blocks.append(population_block)
+    #     population_block = 0
 
-    list_comps = list(comps)
-    population_block = 0
-    list_blocks = []
-
-    # iterate through all new blocks to find out which block's population close to ideal population, add to block list
-    for x in list_comps:
-        for y in x:
-            population_block += populations[y]
-        list_blocks.append(population_block)
-        population_block = 0
-
-    index = min(range(len(list_blocks)), key=lambda x: abs(list_blocks[x]-pop_target))
-    our_blocks.append(list_comps[index])
+    # index = min(range(len(list_blocks)), key=lambda x: abs(list_blocks[x]-pop_target))
+    # our_blocks.append(list_comps[index])
+    # sub_graph = test_graph.copy()
+    removed_set = random.choice(possible_cuts).subset
+    our_blocks.append(removed_set)
     sub_graph = test_graph.copy()
 
-    for x in list_comps[index]:
+    # for x in list_comps[index]:
+    #     sub_graph.remove_node(x)
+    for x in removed_set:
         sub_graph.remove_node(x)
     return sub_graph
 
@@ -184,10 +192,12 @@ def my_mst_kpartition_tree_random(
     for x in range(repeat_time):
         sub_graph = recursive_my_mst_k_partition_tree_random(sub_graph, pop_col, pop_target, epsilon, num_blocks,
                                                              our_blocks, spanning_tree=None, choice=random.choice,)
-    last_spanning_tree = get_spanning_tree_mst(sub_graph)
-    comps = nx.connected_components(last_spanning_tree)
-    list_comps = list(comps)
-    our_blocks.append(list_comps[0])
+    # last_spanning_tree = get_spanning_tree_mst(sub_graph)
+    # comps = nx.connected_components(last_spanning_tree)
+    # list_comps = list(comps)
+    #
+    # our_blocks.append(list_comps[0])
+    our_blocks.append(set(sub_graph.nodes))
 
     return our_blocks
 
@@ -228,7 +238,8 @@ def cut_accept(partition):
 # get the graph from online json file
 def graph_from_url():
     # link = input("Put graph link: ")
-    link = "https://people.csail.mit.edu/ddeford//COUNTY/COUNTY_37.json"
+    link = "https://people.csail.mit.edu/ddeford//COUNTY/COUNTY_37.json"  # County
+    # link = "https://people.csail.mit.edu/ddeford//COUSUB/COUSUB_37.json"  # COUNTY SUB
     r = requests.get(link)
     data = json.loads(r.content)
     g = json_graph.adjacency_graph(data)
@@ -330,7 +341,7 @@ base = 1
 def build_partition(graph):
 
     partition_dict = {}
-    partition_block = my_mst_kpartition_tree_random(graph, pop_col="population", pop_target=0, epsilon=0.5,
+    partition_block = my_mst_kpartition_tree_random(graph, pop_col="population", pop_target=0, epsilon=0.05,
                                                 num_blocks=8, node_repeats=1, spanning_tree=None,
                                                 choice=random.choice)
     for n in graph.nodes:
@@ -352,6 +363,8 @@ def build_markov_chain(steps, chaintype, ideal_population, grid_partition):
     if chaintype == "tree":
         tree_proposal = partial(recom, pop_col="population", pop_target=ideal_population, epsilon=0.05,
                             node_repeats=1, method=my_mst_bipartition_tree_random)
+        # tree_proposal = partial(recom, pop_col="population", pop_target=ideal_population, epsilon=0.1,
+        #                         node_repeats=1, method=recursive_tree_part)
 
     exp_chain = MarkovChain(tree_proposal,
                             Validator([#popbound  # ,boundary_condition
@@ -460,6 +473,7 @@ def main():
     collect_voting_data(seats)
     # plt.hist(rural_seats_list)
     plt.hist(seats_won_table)
+    plt.savefig("./plots/" + "NC_COUNTY_voting.png")
     plt.show()
 
     fig = plt.figure()
